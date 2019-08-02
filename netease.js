@@ -1,17 +1,29 @@
-const puppeteer = require('puppeteer')
+const puppeteer = require('puppeteer');
+const _ = require('underscore');
+const CREDS = require('./creds');
+const fs = require('fs')
 
-puppeteer.launch({headless: false, slowMo: 250, defaultViewport: {width: 1400, height: 1080}}).then(async brower => {
-    const page = await brower.newPage();
+function processListeningRecord(songs) {
+    const path = 'records.json';
+    if (fs.existsSync(path)) {
+        fs.unlink(path);
+    }
 
-    await page.goto("https://music.163.com/");
+    fs.writeFile(path, JSON.stringify(songs));
+}
 
-    // login
+puppeteer.launch({headless: false, slowMo: 50, defaultViewport: {width: 1400, height: 1080}}).then(async browser => {
+    const page = await browser.newPage();
+
+    await page.goto('https://music.163.com/');
+
+    // login with netease email credential
     await page.hover('a.link');
     await page.click('i.icn-wy');
     await page.waitForSelector('div.f-thide');
 
-    await page.type('input#e', '@163.com');
-    await page.type('input#epw', '');
+    await page.type('input#e', CREDS.username);
+    await page.type('input#epw', CREDS.password);
     await page.keyboard.press('Enter');
 
     // get user id
@@ -21,15 +33,17 @@ puppeteer.launch({headless: false, slowMo: 250, defaultViewport: {width: 1400, h
 
     // get the listening record
     await page.goto('https://music.163.com/#/user/songs/rank?id=' + id);
-    let recordUrlPattern = /weapi\/v1\/play\/record/;
-    page.on('response', response => {
-        if (response.ok() && recordUrlPattern.test(response.url())) {
-            response.json().then(function(records) {        
-                records.weekData.forEach(function(record) {
-                    let song = record.song;
-                    console.log(song.name + '|' + song.ar.map(function(a) {return a.name;}).join(",") + '|' + song.al.name);
-                });
-            });
-        }
+    
+    const recordUrlPattern = /weapi\/v1\/play\/record/;
+    const response = await page.waitForResponse(response => response.ok() && recordUrlPattern.test(response.url()));
+    
+    response.json().then(function(records) {        
+        let albums = _.groupBy(records.weekData, record => record.song.al.id);
+        let aggregatedSongs = _.mapObject(albums, function(songs, albumId) {
+            return songs.map(function(s) { return s.song.id; });
+        });
+
+        processListeningRecord(aggregatedSongs);
     });
+
 });
